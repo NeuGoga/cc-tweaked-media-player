@@ -1,5 +1,9 @@
 import pygame
 import json
+import base64
+import os
+import tkinter as tk
+from tkinter import filedialog
 
 DEFAULT_MONITOR_BLOCKS_X = 2
 DEFAULT_MONITOR_BLOCKS_Y = 1
@@ -57,20 +61,30 @@ class AnimationEditor:
         self.reinitialize_grid(set_initial_size=True)
         self.reset_animation()
 
-    def reinitialize_grid(self, set_initial_size=False):
+    def reinitialize_grid(self, set_initial_size=False, force_recalc=True):
+        old_width, old_height = self.cc_width, self.cc_height
         try:
-            self.monitor_blocks_x = min(max(1, int(self.monitor_x_str)), MAX_MONITOR_BLOCKS_X)
-            self.monitor_blocks_y = min(max(1, int(self.monitor_y_str)), MAX_MONITOR_BLOCKS_Y)
+            if force_recalc or '?' not in self.monitor_x_str:
+                self.monitor_blocks_x = min(max(1, int(self.monitor_x_str)), MAX_MONITOR_BLOCKS_X)
+                self.monitor_blocks_y = min(max(1, int(self.monitor_y_str)), MAX_MONITOR_BLOCKS_Y)
             self.fps = min(max(1, int(self.fps_str)), MAX_FPS)
-            self.monitor_x_str = str(self.monitor_blocks_x)
-            self.monitor_y_str = str(self.monitor_blocks_y)
             self.chunk_size = int(self.chunk_size_str)
+            
+            if force_recalc or '?' not in self.monitor_x_str:
+                self.monitor_x_str = str(self.monitor_blocks_x)
+                self.monitor_y_str = str(self.monitor_blocks_y)
+            
+            self.fps_str = str(self.fps)
+            self.chunk_size_str = str(self.chunk_size)
+
         except (ValueError, TypeError):
             self.monitor_x_str = str(self.monitor_blocks_x)
             self.monitor_y_str = str(self.monitor_blocks_y)
 
-        self.cc_width = round((64 * self.monitor_blocks_x - 20) / (6 * self.scale))
-        self.cc_height = round((64 * self.monitor_blocks_y - 20) / (9 * self.scale))
+        if force_recalc:
+            self.cc_width = round((64 * self.monitor_blocks_x - 20) / (6 * self.scale))
+            self.cc_height = round((64 * self.monitor_blocks_y - 20) / (9 * self.scale))
+        
         self.pixels_dims = f"{self.cc_width * 2} x {self.cc_height * 3}"
         self.bixels_dims = f"{self.cc_width} x {int(self.cc_height * 1.5)}"
 
@@ -78,9 +92,14 @@ class AnimationEditor:
             screen_width = max(MIN_WINDOW_WIDTH, self.cc_width * BASE_CELL_SIZE + UI_WIDTH)
             screen_height = max(MIN_WINDOW_HEIGHT, self.cc_height * BASE_CELL_SIZE)
             self.screen = pygame.display.set_mode((screen_width, screen_height), pygame.RESIZABLE)
+
+        dimensions_changed = (old_width != self.cc_width or old_height != self.cc_height)
+
+        if dimensions_changed:
+            pygame.display.set_caption("ComputerCraft Animator")
+            print(f"Grid resized to: {self.cc_width}x{self.cc_height} characters.")
         
-        pygame.display.set_caption("ComputerCraft Animator")
-        print(f"Grid resized to: {self.cc_width}x{self.cc_height} characters.")
+        return dimensions_changed
 
     def reset_animation(self):
         print("Animation has been reset due to size change.")
@@ -153,7 +172,10 @@ class AnimationEditor:
 
         if event.type == pygame.KEYDOWN:
             if self.active_input:
-                if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER): self.reinitialize_grid(); self.reset_animation(); self.active_input = None
+                if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER): 
+                    if self.reinitialize_grid():
+                        self.reset_animation()
+                    self.active_input = None
                 elif event.key == pygame.K_BACKSPACE:
                     if self.active_input == 'x': self.monitor_x_str = self.monitor_x_str[:-1]
                     elif self.active_input == 'y': self.monitor_y_str = self.monitor_y_str[:-1]
@@ -169,13 +191,26 @@ class AnimationEditor:
             if event.key == pygame.K_RIGHT: self.current_frame_index = min(self.current_frame_index + 1, len(self.animation) - 1)
             elif event.key == pygame.K_LEFT: self.current_frame_index = max(self.current_frame_index - 1, 0)
             elif event.key == pygame.K_n:
+                is_shift_pressed = pygame.key.get_mods() & pygame.KMOD_SHIFT
                 new_frame = [row[:] for row in self.animation[self.current_frame_index]]
-                self.animation.insert(self.current_frame_index + 1, new_frame); self.current_frame_index += 1
+                if is_shift_pressed:
+                    self.animation.insert(self.current_frame_index, new_frame)
+                else:
+                    self.animation.insert(self.current_frame_index + 1, new_frame)
+                    self.current_frame_index += 1
             elif event.key == pygame.K_d:
                 if len(self.animation) > 1: self.animation.pop(self.current_frame_index); self.current_frame_index = max(0, self.current_frame_index - 1)
-            elif event.key == pygame.K_o: self.onion_skin_enabled = not self.onion_skin_enabled
-            elif event.key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_CTRL: self.export_animation()
+            elif event.key == pygame.K_o and not (pygame.key.get_mods() & pygame.KMOD_CTRL): self.onion_skin_enabled = not self.onion_skin_enabled
             elif event.key == pygame.K_F11: pygame.display.toggle_fullscreen()
+
+            is_ctrl_pressed = pygame.key.get_mods() & pygame.KMOD_CTRL
+            if is_ctrl_pressed:
+                if event.key == pygame.K_s:
+                    self.save_project()
+                elif event.key == pygame.K_o:
+                    self.load_project()
+                elif event.key == pygame.K_e:
+                    self.export_animation()
 
     def handle_ui_click(self, pos):
         ui_x = self.screen.get_width() - UI_WIDTH
@@ -188,7 +223,11 @@ class AnimationEditor:
                 if name == 'input_y': self.active_input = 'y'; return
                 if name == 'input_fps': self.active_input = 'fps'; return
                 if name == 'input_chunk_size': self.active_input = 'chunk_size'; return
-                if name.startswith('scale_'): self.scale = float(name.split('_')[1]); self.reinitialize_grid(); self.reset_animation(); return
+                if name.startswith('scale_'):
+                    self.scale = float(name.split('_')[1])
+                    if self.reinitialize_grid(): 
+                        self.reset_animation()
+                    return
                 if name.startswith('color_'): self.current_bg_color = name.split('_')[1]; return
 
     def screen_to_world(self, screen_x, screen_y):
@@ -217,7 +256,11 @@ class AnimationEditor:
         end_y = min(self.cc_height, int(self.camera_offset_y + self.screen.get_height() / cell_size) + 2)
 
         for y in range(start_y, end_y):
+            if y >= len(frame_data):
+                continue
             for x in range(start_x, end_x):
+                if x >= len(frame_data[y]):
+                    continue
                 screen_x = (x - self.camera_offset_x) * cell_size
                 screen_y = (y - self.camera_offset_y) * cell_size
                 rect = pygame.Rect(screen_x, screen_y, cell_size, cell_size)
@@ -310,9 +353,83 @@ class AnimationEditor:
         self.screen.blit(self.ui_font.render("BG Color:", True, (220, 220, 220)), (ui_content_x, info_y))
         pygame.draw.rect(self.screen, CC_COLORS[self.current_bg_color], (ui_content_x + 80, info_y, 30, 20))
         
-        instructions = [ "--- Controls ---", "LMB Drag: Draw", "RMB Drag: Erase", "RMB Click: Pick Color", "MMB Drag: Pan", "Scroll: Zoom", "Left/Right: Change Frame", "N: New Frame", "D: Delete Frame", "O: Toggle Onion Skin", "Ctrl+S: Export", "F11: Fullscreen" ]
+        instructions = [ "--- Controls ---", "LMB Drag: Draw", "RMB Drag: Erase", "RMB Click: Pick Color", "MMB Drag: Pan", "Scroll: Zoom", "Left/Right: Change Frame", "N: New Frame", "D: Delete Frame", "O: Toggle Onion Skin", "Ctrl+S: Save Project", "Ctrl+O: Open Project", "Ctrl+E: Export for MC", "F11: Fullscreen" ]
         for i, line in enumerate(instructions):
             self.screen.blit(self.ui_font_small.render(line, True, (180, 180, 180)), (ui_content_x, self.screen.get_height() - 220 + i * 18))
+
+    def save_project(self):
+        root = tk.Tk()
+        root.withdraw()
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".ccanim_proj",
+            filetypes=[("CC Animator Project", "*.ccanim_proj"), ("All Files", "*.*")]
+        )
+        if not filepath:
+            print("Save cancelled.")
+            return
+
+        project_data = {
+            "config": {
+                "monitor_blocks_x": self.monitor_blocks_x,
+                "monitor_blocks_y": self.monitor_blocks_y,
+                "scale": self.scale,
+                "fps": self.fps,
+                "chunk_size": self.chunk_size,
+            },
+            "animation_data": self.animation
+        }
+
+        try:
+            with open(filepath, "w") as f:
+                json.dump(project_data, f, indent=2)
+            print(f"Project saved successfully to {filepath}")
+        except Exception as e:
+            print(f"Error saving project: {e}")
+
+    def load_project(self):
+        root = tk.Tk()
+        root.withdraw()
+        filepath = filedialog.askopenfilename(
+            filetypes=[("CC Animator Project", "*.ccanim_proj"), ("All Files", "*.*")]
+        )
+        if not filepath:
+            print("Load cancelled.")
+            return
+
+        try:
+            with open(filepath, "r") as f:
+                project_data = json.load(f)
+
+            config = project_data["config"]
+
+            if "width" in config and "height" in config:
+                print("Loading project with direct dimensions.")
+                self.cc_width = config["width"]
+                self.cc_height = config["height"]
+            else:
+                print("Loading project with monitor block configuration.")
+                self.monitor_x_str = str(config["monitor_blocks_x"])
+                self.monitor_y_str = str(config["monitor_blocks_y"])
+            
+            self.scale = config.get("scale", 1.0)
+            self.fps_str = str(config.get("fps", 10))
+            self.chunk_size_str = str(config.get("chunk_size", 100))
+            self.monitor_x_str = str(config["monitor_blocks_x"])
+            self.monitor_y_str = str(config["monitor_blocks_y"])
+
+            print(len(self.animation[0]))
+            print(len(self.animation[0][1]))
+            self.reinitialize_grid(set_initial_size=True, force_recalc=False if "width" in config else True)
+            # self.draw_frame(self.animation[self.current_frame_index])
+
+
+            self.animation = project_data["animation_data"]
+            self.current_frame_index = 0
+            
+            print(f"Project loaded successfully from {filepath}")
+
+        except Exception as e:
+            print(f"Error loading project: {e}")
 
     def export_animation(self):
         import zlib
