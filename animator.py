@@ -1,12 +1,11 @@
 import pygame
 import json
 
-# --- CONFIGURATION ---
 DEFAULT_MONITOR_BLOCKS_X = 2
 DEFAULT_MONITOR_BLOCKS_Y = 1
 MIN_WINDOW_WIDTH = 640
 MIN_WINDOW_HEIGHT = 480
-BASE_CELL_SIZE = 16 # The size of a cell at 1.0x zoom
+BASE_CELL_SIZE = 16
 UI_WIDTH = 250
 MAX_MONITOR_BLOCKS_X = 8
 MAX_MONITOR_BLOCKS_Y = 6
@@ -65,7 +64,7 @@ class AnimationEditor:
             self.fps = min(max(1, int(self.fps_str)), MAX_FPS)
             self.monitor_x_str = str(self.monitor_blocks_x)
             self.monitor_y_str = str(self.monitor_blocks_y)
-            self.chunk_size = str(self.chunk_size_str)
+            self.chunk_size = int(self.chunk_size_str)
         except (ValueError, TypeError):
             self.monitor_x_str = str(self.monitor_blocks_x)
             self.monitor_y_str = str(self.monitor_blocks_y)
