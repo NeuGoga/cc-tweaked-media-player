@@ -1,11 +1,12 @@
 import pygame
 import json
 
+# --- CONFIGURATION ---
 DEFAULT_MONITOR_BLOCKS_X = 2
 DEFAULT_MONITOR_BLOCKS_Y = 1
 MIN_WINDOW_WIDTH = 640
 MIN_WINDOW_HEIGHT = 480
-BASE_CELL_SIZE = 16
+BASE_CELL_SIZE = 16 # The size of a cell at 1.0x zoom
 UI_WIDTH = 250
 MAX_MONITOR_BLOCKS_X = 8
 MAX_MONITOR_BLOCKS_Y = 6
@@ -38,10 +39,12 @@ class AnimationEditor:
         self.monitor_blocks_y = DEFAULT_MONITOR_BLOCKS_Y
         self.scale = 1.0
         self.fps = 10
+        self.chunk_size = 10
         self.cc_width, self.cc_height = 0, 0
 
         self.monitor_x_str = str(self.monitor_blocks_x)
         self.monitor_y_str = str(self.monitor_blocks_y)
+        self.chunk_size_str = str(self.chunk_size)
         self.fps_str = str(self.fps)
         self.active_input = None
         self.ui_rects = {}
@@ -62,6 +65,7 @@ class AnimationEditor:
             self.fps = min(max(1, int(self.fps_str)), MAX_FPS)
             self.monitor_x_str = str(self.monitor_blocks_x)
             self.monitor_y_str = str(self.monitor_blocks_y)
+            self.chunk_size_str = str(self.chunk_size)
         except (ValueError, TypeError):
             self.monitor_x_str = str(self.monitor_blocks_x)
             self.monitor_y_str = str(self.monitor_blocks_y)
@@ -155,10 +159,12 @@ class AnimationEditor:
                     if self.active_input == 'x': self.monitor_x_str = self.monitor_x_str[:-1]
                     elif self.active_input == 'y': self.monitor_y_str = self.monitor_y_str[:-1]
                     elif self.active_input == 'fps': self.fps_str = self.fps_str[:-1]
+                    elif self.active_input == 'chunk_size': self.chunk_size_str = self.chunk_size_str[:-1] 
                 elif event.unicode.isdigit():
                     if self.active_input == 'x': self.monitor_x_str += event.unicode
                     elif self.active_input == 'y': self.monitor_y_str += event.unicode
                     elif self.active_input == 'fps': self.fps_str += event.unicode
+                    elif self.active_input == 'chunk_size': self.chunk_size_str += event.unicode
                 return
 
             if event.key == pygame.K_RIGHT: self.current_frame_index = min(self.current_frame_index + 1, len(self.animation) - 1)
@@ -182,6 +188,7 @@ class AnimationEditor:
                 if name == 'input_x': self.active_input = 'x'; return
                 if name == 'input_y': self.active_input = 'y'; return
                 if name == 'input_fps': self.active_input = 'fps'; return
+                if name == 'input_chunk_size': self.active_input = 'chunk_size'; return
                 if name.startswith('scale_'): self.scale = float(name.split('_')[1]); self.reinitialize_grid(); self.reset_animation(); return
                 if name.startswith('color_'): self.current_bg_color = name.split('_')[1]; return
 
@@ -281,6 +288,12 @@ class AnimationEditor:
         self.screen.blit(self.ui_font.render(self.fps_str, True, (255, 255, 255)), (fps_box.x + 5, fps_box.y + 5))
 
         info_y += 70
+        self.screen.blit(self.ui_font.render("Chuck size:", True, (220, 220, 220)), (ui_content_x, info_y))
+        chunk_box = pygame.Rect(ui_content_x + 60, info_y - 5, 50, 30); self.ui_rects['input_chunk_size'] = chunk_box
+        pygame.draw.rect(self.screen, (20, 20, 20) if self.active_input == 'chunk_size' else (80, 80, 80), chunk_box); pygame.draw.rect(self.screen, (120,120,120), chunk_box, 2)
+        self.screen.blit(self.ui_font.render(self.fps_str, True, (255, 255, 255)), (chunk_box.x + 5, chunk_box.y + 5))
+
+        info_y += 70
         self.screen.blit(self.ui_font.render("Scale:", True, (220, 220, 220)), (ui_content_x, info_y))
         scales = [0.5, 1.0, 1.25, 1.5]
         for i, s in enumerate(scales):
@@ -303,10 +316,60 @@ class AnimationEditor:
             self.screen.blit(self.ui_font_small.render(line, True, (180, 180, 180)), (ui_content_x, self.screen.get_height() - 220 + i * 18))
 
     def export_animation(self):
-        print("Exporting animation...")
-        palette_map = {HEX_CHARS[i]: name for i, name in enumerate(COLOR_NAMES)}
+        import zlib
+        import base64
+        import os
+
+        CHUNK_SIZE = self.chunk_size 
         
-        output = {
+        print("Exporting and chunking animation...")
+        
+        palette_map = {HEX_CHARS[i]: name for i, name in enumerate(COLOR_NAMES)}
+        color_to_hex = {name: HEX_CHARS[i] for i, name in enumerate(COLOR_NAMES)}
+        
+        base_filename = "animation"
+        chunk_filenames = []
+
+        output_folder = base_filename
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+        print(f"Exporting animation to folder: '{output_folder}'...")
+        
+        for chunk_index, i in enumerate(range(0, len(self.animation), CHUNK_SIZE)):
+            chunk_data = self.animation[i : i + CHUNK_SIZE]
+            chunk_output_filename = f"{base_filename}_{chunk_index}.canim"
+            chunk_filenames.append(chunk_output_filename)
+            
+            print(f"  Processing chunk {chunk_index+1} ({len(chunk_data)} frames)...")
+
+            chunk_frames = []
+            
+            keyframe_bgs = "".join([color_to_hex[chunk_data[0][y][x]] for y in range(self.cc_height) for x in range(self.cc_width)])
+            chunk_frames.append({"type": "full", "bgs": keyframe_bgs})
+
+            for frame_idx in range(1, len(chunk_data)):
+                prev_frame, curr_frame = chunk_data[frame_idx-1], chunk_data[frame_idx]
+                changes = []
+                for y in range(self.cc_height):
+                    for x in range(self.cc_width):
+                        if prev_frame[y][x] != curr_frame[y][x]:
+                            changes.append({"x": x + 1, "y": y + 1, "bg": color_to_hex[curr_frame[y][x]]})
+                
+                if changes:
+                    chunk_frames.append({"type": "delta", "changes": changes})
+                else:
+                    chunk_frames.append({"type": "delta", "changes": []})
+
+            chunk_json_string = json.dumps({"frames": chunk_frames}, separators=(',', ':'))
+            compressed_data = zlib.compress(chunk_json_string.encode('utf-8'))
+            base64_string = base64.b64encode(compressed_data).decode('ascii')
+
+            chunk_filepath = os.path.join(output_folder, chunk_output_filename)
+
+            with open(chunk_filepath, "w") as f:
+                f.write(base64_string)
+
+        master_output = {
             "header": {
                 "width": self.cc_width,
                 "height": self.cc_height,
@@ -314,41 +377,14 @@ class AnimationEditor:
                 "scale": self.scale,
                 "palette": palette_map
             },
-            "frames": []
+            "chunks": chunk_filenames
         }
-        color_to_hex = {name: HEX_CHARS[i] for i, name in enumerate(COLOR_NAMES)}
 
-        keyframe_bgs_list = []
-        for y in range(self.cc_height):
-            for x in range(self.cc_width):
-                keyframe_bgs_list.append(color_to_hex[self.animation[0][y][x]])
-        keyframe_bgs = "".join(keyframe_bgs_list)
-        output["frames"].append({"type": "full", "bgs": keyframe_bgs})
-
-        for i in range(1, len(self.animation)):
-            prev_frame = self.animation[i-1]
-            curr_frame = self.animation[i]
-            changes = []
-            for y in range(self.cc_height):
-                for x in range(self.cc_width):
-                    if prev_frame[y][x] != curr_frame[y][x]:
-                        changes.append({
-                            "x": x + 1,
-                            "y": y + 1,
-                            "bg": color_to_hex[curr_frame[y][x]]
-                        })
+        master_filepath = os.path.join(output_folder, f"{base_filename}.mcanim")
+        with open(master_filepath, "w") as f:
+            json.dump(master_output, f, indent=2)
             
-            if changes:
-                output["frames"].append({"type": "delta", "changes": changes})
-            
-        import zlib, base64
-        json_string = json.dumps(output, separators=(',', ':')) 
-        compressed_data = zlib.compress(json_string.encode('utf-8'))
-        base64_string = base64.b64encode(compressed_data).decode('ascii')
-            
-        with open("animation.canim", "w") as f:
-            f.write(base64_string)
-        print("Export complete! Saved compressed animation to animation.canim")
+        print(f"\nExport complete! Master file and {len(chunk_filenames)} chunks saved to '{output_folder}' folder.")
 
 if __name__ == "__main__":
     editor = AnimationEditor()

@@ -24,7 +24,7 @@ HEX_CHARS = "0123456789abcdef"
 class VideoConverterApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Video to .canim Converter")
+        self.root.title("CC Video to .canim Converter")
         self.root.geometry("400x450")
 
         self.filepath = tk.StringVar()
@@ -32,6 +32,7 @@ class VideoConverterApp:
         self.monitor_y = tk.StringVar(value="1")
         self.scale = tk.StringVar(value="1.0")
         self.fps = tk.StringVar(value="10")
+        self.chunk_size = tk.StringVar(value="10")
         self.status = tk.StringVar(value="Ready.")
         self._filepath_full = ""
 
@@ -49,11 +50,13 @@ class VideoConverterApp:
         ttk.Entry(frame, textvariable=self.scale, width=7).grid(column=2, row=4, sticky=tk.W)
         ttk.Label(frame, text="Output FPS:").grid(column=1, row=5, sticky=tk.W, pady=5)
         ttk.Entry(frame, textvariable=self.fps, width=7).grid(column=2, row=5, sticky=tk.W)
+        ttk.Label(frame, text="Frames / Chunk:").grid(column=1, row=6, sticky=tk.W, pady=5)
+        ttk.Entry(frame, textvariable=self.chunk_size, width=7).grid(column=2, row=6, sticky=tk.W)
         self.convert_button = ttk.Button(frame, text="Convert", command=self.start_conversion)
-        self.convert_button.grid(column=1, row=6, columnspan=2, pady=20)
+        self.convert_button.grid(column=1, row=7, columnspan=2, pady=20)
         self.progress = ttk.Progressbar(frame, orient=tk.HORIZONTAL, length=300, mode='determinate')
-        self.progress.grid(column=1, row=7, columnspan=2, pady=5)
-        ttk.Label(frame, textvariable=self.status).grid(column=1, row=8, columnspan=2, pady=10)
+        self.progress.grid(column=1, row=8, columnspan=2, pady=5)
+        ttk.Label(frame, textvariable=self.status).grid(column=1, row=9, columnspan=2, pady=10)
 
     def select_file(self):
         path = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4"), ("All files", "*.*")])
@@ -97,6 +100,7 @@ class VideoConverterApp:
             vid_path = self._filepath_full
             mon_x, mon_y = int(self.monitor_x.get()), int(self.monitor_y.get())
             scale, fps = float(self.scale.get()), int(self.fps.get())
+            chunk_size = max(1, int(self.chunk_size.get()))
 
             cc_width = round((64 * mon_x - 20) / (6 * scale))
             cc_height = round((64 * mon_y - 20) / (9 * scale))
@@ -148,7 +152,7 @@ class VideoConverterApp:
                             dither_array[y + 1, x] += quant_error * 5 / 16
                             if x + 1 < cc_width:
                                 dither_array[y + 1, x + 1] += quant_error * 1 / 16
-                                
+
                 cc_frame_indices = output_indices.flatten()
                 cc_frame = [COLOR_NAMES[i] for i in cc_frame_indices]
                 processed_frames.append([cc_frame[i:i+cc_width] for i in range(0, len(cc_frame), cc_width)])
@@ -157,47 +161,79 @@ class VideoConverterApp:
             cap.release()
 
             self.update_queue.put(("status", "Exporting to .canim format..."))
-            self.export_animation(processed_frames, cc_width, cc_height, fps, scale)
+            self.export_animation(processed_frames, cc_width, cc_height, fps, scale, chunk_size)
             self.update_queue.put(("status", "Conversion complete! Saved to animation.canim"))
         except Exception as e:
             self.update_queue.put(("status", f"Error: {e}"))
         finally:
             self.update_queue.put(("progress", 0))
 
-    def export_animation(self, animation, width, height, fps, scale):
+    def export_animation(self, animation, width, height, fps, scale, chunk_size):
+        import zlib
+        import base64
+        import os
+        
+        CHUNK_SIZE = chunk_size 
+        base_filename = "animation"
+
+        output_folder = base_filename
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+        self.update_queue.put(("status", f"Saving to folder '{output_folder}'..."))
+
+        self.update_queue.put(("status", "Exporting and chunking animation..."))
+        
         palette_map = {HEX_CHARS[i]: name for i, name in enumerate(COLOR_NAMES)}
-        output = {"header": {"width": width, "height": height, "fps": fps, "scale": scale, "palette": palette_map}, "frames": []}
         color_to_hex = {name: HEX_CHARS[i] for i, name in enumerate(COLOR_NAMES)}
         
-        keyframe_bgs_list = []
-        for y in range(height):
-            for x in range(width):
-                keyframe_bgs_list.append(color_to_hex[animation[0][y][x]])
-        keyframe_bgs = "".join(keyframe_bgs_list)
-        output["frames"].append({"type": "full", "bgs": keyframe_bgs})
-
-        for i in range(1, len(animation)):
-            prev_frame = animation[i-1]
-            curr_frame = animation[i]
-            changes = []
-            for y in range(height):
-                for x in range(width):
-                    if prev_frame[y][x] != curr_frame[y][x]:
-                        changes.append({
-                            "x": x + 1,
-                            "y": y + 1,
-                            "bg": color_to_hex[curr_frame[y][x]]
-                        })
+        chunk_filenames = []
+        
+        for chunk_index, i in enumerate(range(0, len(animation), CHUNK_SIZE)):
+            chunk_data = animation[i : i + CHUNK_SIZE]
+            chunk_output_filename = f"{base_filename}_{chunk_index}.canim"
+            chunk_filenames.append(chunk_output_filename)
             
-            if changes:
-                output["frames"].append({"type": "delta", "changes": changes})
+            self.update_queue.put(("status", f"Exporting chunk {chunk_index+1}..."))
 
-        json_string = json.dumps(output, separators=(',', ':'))
-        compressed_data = zlib.compress(json_string.encode('utf-8'))
-        base64_string = base64.b64encode(compressed_data).decode('ascii')
+            chunk_frames = []
             
-        with open("animation.canim", "w") as f:
-            f.write(base64_string)
+            keyframe_bgs = "".join([color_to_hex[chunk_data[0][y][x]] for y in range(height) for x in range(width)])
+            chunk_frames.append({"type": "full", "bgs": keyframe_bgs})
+
+            for frame_idx in range(1, len(chunk_data)):
+                prev_frame, curr_frame = chunk_data[frame_idx-1], chunk_data[frame_idx]
+                changes = []
+                for y in range(height):
+                    for x in range(width):
+                        if prev_frame[y][x] != curr_frame[y][x]:
+                            changes.append({"x": x + 1, "y": y + 1, "bg": color_to_hex[curr_frame[y][x]]})
+                
+                chunk_frames.append({"type": "delta", "changes": changes})
+
+            chunk_json_string = json.dumps({"frames": chunk_frames}, separators=(',', ':'))
+            compressed_data = zlib.compress(chunk_json_string.encode('utf-8'))
+            base64_string = base64.b64encode(compressed_data).decode('ascii')
+            
+            chunk_filepath = os.path.join(output_folder, chunk_output_filename)
+            with open(chunk_filepath, "w") as f:
+                f.write(base64_string)
+
+        master_output = {
+            "header": {
+                "width": width,
+                "height": height,
+                "fps": fps,
+                "scale": scale,
+                "palette": palette_map
+            },
+            "chunks": chunk_filenames
+        }
+        
+        master_filepath = os.path.join(output_folder, f"{base_filename}.mcanim")
+        with open(master_filepath, "w") as f:
+            json.dump(master_output, f, indent=2)
+            
+        self.update_queue.put(("status", f"Export complete! Created {base_filename}.mcanim and {len(chunk_filenames)} chunks."))
 
 if __name__ == "__main__":
     root = tk.Tk()
