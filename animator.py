@@ -65,7 +65,7 @@ class AnimationEditor:
             self.fps = min(max(1, int(self.fps_str)), MAX_FPS)
             self.monitor_x_str = str(self.monitor_blocks_x)
             self.monitor_y_str = str(self.monitor_blocks_y)
-            self.chunk_size_str = str(self.chunk_size)
+            self.chunk_size = str(self.chunk_size_str)
         except (ValueError, TypeError):
             self.monitor_x_str = str(self.monitor_blocks_x)
             self.monitor_y_str = str(self.monitor_blocks_y)
@@ -291,7 +291,7 @@ class AnimationEditor:
         self.screen.blit(self.ui_font.render("Chuck size:", True, (220, 220, 220)), (ui_content_x, info_y))
         chunk_box = pygame.Rect(ui_content_x + 60, info_y - 5, 50, 30); self.ui_rects['input_chunk_size'] = chunk_box
         pygame.draw.rect(self.screen, (20, 20, 20) if self.active_input == 'chunk_size' else (80, 80, 80), chunk_box); pygame.draw.rect(self.screen, (120,120,120), chunk_box, 2)
-        self.screen.blit(self.ui_font.render(self.fps_str, True, (255, 255, 255)), (chunk_box.x + 5, chunk_box.y + 5))
+        self.screen.blit(self.ui_font.render(self.chunk_size_str, True, (255, 255, 255)), (chunk_box.x + 5, chunk_box.y + 5))
 
         info_y += 70
         self.screen.blit(self.ui_font.render("Scale:", True, (220, 220, 220)), (ui_content_x, info_y))
