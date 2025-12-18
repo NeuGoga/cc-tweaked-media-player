@@ -11,7 +11,7 @@ This project provides the tools and the in-game library necessary to display ani
 *   **Advanced Animation Format (`.canim`)**:
     *   Utilizes zlib compression and Base64 encoding for optimized file sizes.
     *   Supports delta-framing, only storing changes between frames to dramatically reduce data overhead.
-    *   Includes a full color palette and metadata for scale, dimensions, and FPS.
+    *   Includes a 16-color palette and metadata for scale, dimensions, and FPS.
 
 *   **Video to `.canim` Converter (Tkinter GUI)**:
     *   Converts standard video files (`.mp4`, etc.) into the `.canim` format.
