@@ -51,5 +51,5 @@ To use the video converter and animation editor, you need Python 3 and the follo
         *   **`D`**: Delete the current frame.
         *   **Left/Right Arrows**: Navigate between frames.
         *   **`O`**: Toggle onion skinning.
-    4.  Press `Ctrl+S` to export your work as `animation.canim`.
+    4.  Press `Ctrl+E` to export your work as `animation.canim`.
 

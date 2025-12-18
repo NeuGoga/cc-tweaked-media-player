@@ -4,17 +4,19 @@ import base64
 import os
 import tkinter as tk
 from tkinter import filedialog
+import zlib
 
 DEFAULT_MONITOR_BLOCKS_X = 2
 DEFAULT_MONITOR_BLOCKS_Y = 1
-MIN_WINDOW_WIDTH = 640
-MIN_WINDOW_HEIGHT = 480
+MIN_WINDOW_WIDTH = 900
+MIN_WINDOW_HEIGHT = 600 
 BASE_CELL_SIZE = 16
-UI_WIDTH = 250
+UI_WIDTH = 260
 MAX_MONITOR_BLOCKS_X = 8
 MAX_MONITOR_BLOCKS_Y = 6
 MAX_FPS = 20
-ONION_SKIN_ALPHA = 90
+
+ONION_SKIN_ALPHA = 180 
 
 CC_COLORS = {
     "white": (240, 240, 240), "orange": (242, 178, 51), "magenta": (229, 127, 216),
@@ -31,12 +33,17 @@ HEX_CHARS = "0123456789abcdef"
 class AnimationEditor:
     def __init__(self):
         pygame.init()
-        self.ui_font = pygame.font.Font(pygame.font.get_default_font(), 16)
-        self.ui_font_small = pygame.font.Font(pygame.font.get_default_font(), 14)
+        self.set_app_icon()
+        
+        self.ui_font = pygame.font.SysFont("Arial", 14, bold=True)
+        self.ui_font_small = pygame.font.SysFont("Arial", 12)
+        self.ui_font_header = pygame.font.SysFont("Arial", 18, bold=True)
+        
         self.clock = pygame.time.Clock()
 
-        self.current_bg_color = "black"
+        self.current_bg_color = "white"
         self.onion_skin_enabled = True
+        self.show_help = False 
         
         self.monitor_blocks_x = DEFAULT_MONITOR_BLOCKS_X
         self.monitor_blocks_y = DEFAULT_MONITOR_BLOCKS_Y
@@ -60,6 +67,18 @@ class AnimationEditor:
 
         self.reinitialize_grid(set_initial_size=True)
         self.reset_animation()
+
+    def set_app_icon(self):
+        surface = pygame.Surface((32, 32))
+        surface.fill((255, 0, 255))
+        surface.set_colorkey((255, 0, 255))
+        pygame.draw.rect(surface, (50, 50, 50), (2, 2, 28, 22)) 
+        pygame.draw.rect(surface, (20, 20, 20), (4, 4, 24, 18)) 
+        pygame.draw.rect(surface, (50, 50, 50), (12, 24, 8, 4))
+        pygame.draw.rect(surface, (40, 40, 40), (8, 28, 16, 2))
+        pygame.draw.rect(surface, (242, 178, 51), (8, 8, 4, 4))
+        pygame.draw.rect(surface, (153, 178, 242), (14, 10, 4, 4))
+        pygame.display.set_icon(surface)
 
     def reinitialize_grid(self, set_initial_size=False, force_recalc=True):
         old_width, old_height = self.cc_width, self.cc_height
@@ -94,15 +113,13 @@ class AnimationEditor:
             self.screen = pygame.display.set_mode((screen_width, screen_height), pygame.RESIZABLE)
 
         dimensions_changed = (old_width != self.cc_width or old_height != self.cc_height)
-
         if dimensions_changed:
-            pygame.display.set_caption("ComputerCraft Animator")
-            print(f"Grid resized to: {self.cc_width}x{self.cc_height} characters.")
+            pygame.display.set_caption("CC Animator")
         
         return dimensions_changed
 
     def reset_animation(self):
-        print("Animation has been reset due to size change.")
+        print("Animation reset.")
         frame = [["black" for _ in range(self.cc_width)] for _ in range(self.cc_height)]
         self.animation = [frame]
         self.current_frame_index = 0
@@ -112,7 +129,8 @@ class AnimationEditor:
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
-                elif event.type == pygame.VIDEORESIZE: self.screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
+                elif event.type == pygame.VIDEORESIZE: 
+                    self.screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
                 self.handle_input(event)
             self.handle_continuous_input()
             self.draw()
@@ -123,6 +141,8 @@ class AnimationEditor:
         mx, my = pygame.mouse.get_pos()
         grid_width = self.screen.get_width() - UI_WIDTH
         
+        if self.show_help: return
+
         if self.panning:
             dx, dy = pygame.mouse.get_rel()
             self.camera_offset_x -= dx / (BASE_CELL_SIZE * self.zoom_level)
@@ -136,7 +156,6 @@ class AnimationEditor:
         
         elif pygame.mouse.get_pressed()[2]:
             if mx < grid_width:
-                self.current_bg_color = "black"
                 world_x, world_y = self.screen_to_world(mx, my)
                 if 0 <= world_x < self.cc_width and 0 <= world_y < self.cc_height:
                     self.animation[self.current_frame_index][world_y][world_x] = "black"
@@ -152,25 +171,31 @@ class AnimationEditor:
             self.camera_offset_y += world_y_before - world_y_after
 
         if event.type == pygame.MOUSEBUTTONDOWN:
+            if self.show_help:
+                self.show_help = False
+                return
+
             if event.button == 1: self.handle_ui_click(pygame.mouse.get_pos())
             elif event.button == 2:
                 self.panning = True
                 pygame.mouse.get_rel()
             elif event.button == 3:
-                 self.color_before_erase = self.current_bg_color
                  mx, my = pygame.mouse.get_pos()
                  if mx < self.screen.get_width() - UI_WIDTH:
                      world_x, world_y = self.screen_to_world(mx, my)
                      if 0 <= world_x < self.cc_width and 0 <= world_y < self.cc_height:
-                         self.current_bg_color = self.animation[self.current_frame_index][world_y][world_x]
+                         clicked_color = self.animation[self.current_frame_index][world_y][world_x]
+                         if clicked_color != "black":
+                             self.current_bg_color = clicked_color
         
         if event.type == pygame.MOUSEBUTTONUP:
             if event.button == 2: self.panning = False
-            if event.button == 3 and self.color_before_erase:
-                self.current_bg_color = self.color_before_erase
-                self.color_before_erase = None
 
         if event.type == pygame.KEYDOWN:
+            if self.show_help and event.key != pygame.K_h:
+                self.show_help = False
+                return
+
             if self.active_input:
                 if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER): 
                     if self.reinitialize_grid():
@@ -190,6 +215,7 @@ class AnimationEditor:
 
             if event.key == pygame.K_RIGHT: self.current_frame_index = min(self.current_frame_index + 1, len(self.animation) - 1)
             elif event.key == pygame.K_LEFT: self.current_frame_index = max(self.current_frame_index - 1, 0)
+            
             elif event.key == pygame.K_n:
                 is_shift_pressed = pygame.key.get_mods() & pygame.KMOD_SHIFT
                 new_frame = [row[:] for row in self.animation[self.current_frame_index]]
@@ -198,19 +224,18 @@ class AnimationEditor:
                 else:
                     self.animation.insert(self.current_frame_index + 1, new_frame)
                     self.current_frame_index += 1
+
             elif event.key == pygame.K_d:
                 if len(self.animation) > 1: self.animation.pop(self.current_frame_index); self.current_frame_index = max(0, self.current_frame_index - 1)
             elif event.key == pygame.K_o and not (pygame.key.get_mods() & pygame.KMOD_CTRL): self.onion_skin_enabled = not self.onion_skin_enabled
             elif event.key == pygame.K_F11: pygame.display.toggle_fullscreen()
+            elif event.key == pygame.K_h: self.show_help = not self.show_help
 
             is_ctrl_pressed = pygame.key.get_mods() & pygame.KMOD_CTRL
             if is_ctrl_pressed:
-                if event.key == pygame.K_s:
-                    self.save_project()
-                elif event.key == pygame.K_o:
-                    self.load_project()
-                elif event.key == pygame.K_e:
-                    self.export_animation()
+                if event.key == pygame.K_s: self.save_project()
+                elif event.key == pygame.K_o: self.load_project()
+                elif event.key == pygame.K_e: self.export_animation()
 
     def handle_ui_click(self, pos):
         ui_x = self.screen.get_width() - UI_WIDTH
@@ -238,13 +263,19 @@ class AnimationEditor:
 
     def draw(self):
         self.screen.fill((50, 50, 50))
-        grid_surface = pygame.Surface((self.screen.get_width() - UI_WIDTH, self.screen.get_height()), pygame.SRCALPHA)
-        grid_surface.fill((25, 25, 25))
+        
+        grid_width = self.screen.get_width() - UI_WIDTH
+        pygame.draw.rect(self.screen, (40, 40, 40), (0, 0, grid_width, self.screen.get_height()))
+
         if self.onion_skin_enabled and self.current_frame_index > 0:
-            self.draw_frame(self.animation[self.current_frame_index - 1], alpha=60)
-        self.draw_frame(self.animation[self.current_frame_index])
+            self.draw_frame(self.animation[self.current_frame_index - 1], alpha=ONION_SKIN_ALPHA)
+
+        self.draw_frame(self.animation[self.current_frame_index], alpha=255)
+        
         self.draw_grid()
         self.draw_ui()
+        if self.show_help: self.draw_help_overlay()
+        
         pygame.display.flip()
 
     def draw_frame(self, frame_data, alpha=255):
@@ -256,32 +287,24 @@ class AnimationEditor:
         end_y = min(self.cc_height, int(self.camera_offset_y + self.screen.get_height() / cell_size) + 2)
 
         for y in range(start_y, end_y):
-            if y >= len(frame_data):
-                continue
+            if y >= len(frame_data): continue
             for x in range(start_x, end_x):
-                if x >= len(frame_data[y]):
-                    continue
-                screen_x = (x - self.camera_offset_x) * cell_size
-                screen_y = (y - self.camera_offset_y) * cell_size
-                rect = pygame.Rect(screen_x, screen_y, cell_size, cell_size)
+                if x >= len(frame_data[y]): continue
                 
                 bg_color = frame_data[y][x]
                 bg_rgb = CC_COLORS[bg_color]
+                
+                screen_x = (x - self.camera_offset_x) * cell_size
+                screen_y = (y - self.camera_offset_y) * cell_size
+                rect = pygame.Rect(screen_x, screen_y, cell_size, cell_size)
                 
                 if alpha != 255:
                     if bg_color != "black":
                         s = pygame.Surface((cell_size, cell_size), pygame.SRCALPHA)
                         s.fill((*bg_rgb, alpha))
                         self.screen.blit(s, rect.topleft)
-                
                 else:
-                    is_onion_skin_active = self.onion_skin_enabled and self.current_frame_index > 0
-                    
-                    if is_onion_skin_active and bg_color == "black":
-                        s = pygame.Surface((cell_size, cell_size), pygame.SRCALPHA)
-                        s.fill((bg_rgb[0], bg_rgb[1], bg_rgb[2], 100))
-                        self.screen.blit(s, rect.topleft)
-                    else:
+                    if bg_color != "black":
                         pygame.draw.rect(self.screen, bg_rgb, rect)
 
     def draw_grid(self):
@@ -291,216 +314,189 @@ class AnimationEditor:
         offset_x = -self.camera_offset_x * cell_size
         offset_y = -self.camera_offset_y * cell_size
 
-        for x in range(self.cc_width + 1):
-            line_x = x * cell_size + offset_x
-            if 0 <= line_x <= grid_width:
-                pygame.draw.line(self.screen, (100, 100, 100), (line_x, 0), (line_x, grid_height))
+        if cell_size > 4:
+            for x in range(self.cc_width + 1):
+                line_x = x * cell_size + offset_x
+                if 0 <= line_x <= grid_width:
+                    pygame.draw.line(self.screen, (60, 60, 60), (line_x, 0), (line_x, grid_height))
+            
+            for y in range(self.cc_height + 1):
+                line_y = y * cell_size + offset_y
+                if 0 <= line_y <= grid_height:
+                    pygame.draw.line(self.screen, (60, 60, 60), (0, line_y), (grid_width, line_y))
         
-        for y in range(self.cc_height + 1):
-            line_y = y * cell_size + offset_y
-            if 0 <= line_y <= grid_height:
-                pygame.draw.line(self.screen, (100, 100, 100), (0, line_y), (grid_width, line_y))
+        border_rect = pygame.Rect(offset_x, offset_y, self.cc_width * cell_size, self.cc_height * cell_size)
+        pygame.draw.rect(self.screen, (100, 100, 100), border_rect, 2)
 
     def draw_ui(self):
         ui_x = self.screen.get_width() - UI_WIDTH
-        pygame.draw.rect(self.screen, (30, 30, 30), (ui_x, 0, UI_WIDTH, self.screen.get_height()))
+        screen_h = self.screen.get_height()
+        
+        pygame.draw.rect(self.screen, (35, 35, 35), (ui_x, 0, UI_WIDTH, screen_h))
         self.ui_rects = {}
 
+        start_y = 20
+        swatch_size = 28
+        padding = 4
+        
         for i, color in enumerate(COLOR_PALETTE):
-            rect = pygame.Rect(ui_x + 20, i * (BASE_CELL_SIZE + 2) + 20, BASE_CELL_SIZE, BASE_CELL_SIZE)
+            col = i % 4
+            row = i // 4
+            rect = pygame.Rect(ui_x + 20 + col*(swatch_size+padding), start_y + row*(swatch_size+padding), swatch_size, swatch_size)
             self.ui_rects[f'color_{COLOR_NAMES[i]}'] = rect
             pygame.draw.rect(self.screen, color, rect)
+            if self.current_bg_color == COLOR_NAMES[i]:
+                pygame.draw.rect(self.screen, (255, 255, 255), rect.inflate(4,4), 2)
 
-        info_y = 30; ui_content_x = ui_x + 50
-        self.screen.blit(self.ui_font.render(f"Frame: {self.current_frame_index + 1} / {len(self.animation)}", True, (220, 220, 220)), (ui_content_x, info_y))
+        current_y = start_y + 4 * (swatch_size+padding) + 25
+        left_margin = ui_x + 15
         
-        info_y += 50
-        self.screen.blit(self.ui_font.render("Monitor Size (Blocks):", True, (220, 220, 220)), (ui_content_x, info_y))
-        x_box = pygame.Rect(ui_content_x + 30, info_y + 25, 40, 25); self.ui_rects['input_x'] = x_box
-        y_box = pygame.Rect(ui_content_x + 100, info_y + 25, 40, 25); self.ui_rects['input_y'] = y_box
-        pygame.draw.rect(self.screen, (20, 20, 20) if self.active_input == 'x' else (80, 80, 80), x_box); pygame.draw.rect(self.screen, (120,120,120), x_box, 2)
-        pygame.draw.rect(self.screen, (20, 20, 20) if self.active_input == 'y' else (80, 80, 80), y_box); pygame.draw.rect(self.screen, (120,120,120), y_box, 2)
-        self.screen.blit(self.ui_font_small.render("X:", True, (220, 220, 220)), (x_box.x - 20, x_box.y + 5)); self.screen.blit(self.ui_font_small.render("Y:", True, (220, 220, 220)), (y_box.x - 20, y_box.y + 5))
-        self.screen.blit(self.ui_font.render(self.monitor_x_str, True, (255, 255, 255)), (x_box.x + 5, x_box.y + 5)); self.screen.blit(self.ui_font.render(self.monitor_y_str, True, (255, 255, 255)), (y_box.x + 5, y_box.y + 5))
+        self.screen.blit(self.ui_font.render(f"Frame: {self.current_frame_index + 1} / {len(self.animation)}", True, (220, 220, 220)), (left_margin, current_y))
+        current_y += 35
 
-        info_y += 70
-        self.screen.blit(self.ui_font.render("FPS:", True, (220, 220, 220)), (ui_content_x, info_y))
-        fps_box = pygame.Rect(ui_content_x + 60, info_y - 5, 50, 30); self.ui_rects['input_fps'] = fps_box
-        pygame.draw.rect(self.screen, (20, 20, 20) if self.active_input == 'fps' else (80, 80, 80), fps_box); pygame.draw.rect(self.screen, (120,120,120), fps_box, 2)
-        self.screen.blit(self.ui_font.render(self.fps_str, True, (255, 255, 255)), (fps_box.x + 5, fps_box.y + 5))
+        self.screen.blit(self.ui_font_small.render("Monitor Size (Blocks):", True, (180, 180, 180)), (left_margin, current_y))
+        x_box = pygame.Rect(left_margin, current_y + 20, 40, 25)
+        y_box = pygame.Rect(left_margin + 50, current_y + 20, 40, 25)
+        self.ui_rects['input_x'] = x_box
+        self.ui_rects['input_y'] = y_box
+        for box, val, active in [(x_box, self.monitor_x_str, self.active_input == 'x'), (y_box, self.monitor_y_str, self.active_input == 'y')]:
+            pygame.draw.rect(self.screen, (20, 20, 20) if active else (60, 60, 60), box)
+            pygame.draw.rect(self.screen, (100,100,100), box, 1)
+            self.screen.blit(self.ui_font.render(val, True, "white"), (box.x + 5, box.y + 3))
+        current_y += 55
 
-        info_y += 70
-        self.screen.blit(self.ui_font.render("Chuck size:", True, (220, 220, 220)), (ui_content_x, info_y))
-        chunk_box = pygame.Rect(ui_content_x + 60, info_y - 5, 50, 30); self.ui_rects['input_chunk_size'] = chunk_box
-        pygame.draw.rect(self.screen, (20, 20, 20) if self.active_input == 'chunk_size' else (80, 80, 80), chunk_box); pygame.draw.rect(self.screen, (120,120,120), chunk_box, 2)
-        self.screen.blit(self.ui_font.render(self.chunk_size_str, True, (255, 255, 255)), (chunk_box.x + 5, chunk_box.y + 5))
+        self.screen.blit(self.ui_font_small.render("FPS  |  Chunk Size:", True, (180, 180, 180)), (left_margin, current_y))
+        fps_box = pygame.Rect(left_margin, current_y + 20, 40, 25)
+        chunk_box = pygame.Rect(left_margin + 60, current_y + 20, 40, 25)
+        self.ui_rects['input_fps'] = fps_box
+        self.ui_rects['input_chunk_size'] = chunk_box
+        for box, val, active in [(fps_box, self.fps_str, self.active_input == 'fps'), (chunk_box, self.chunk_size_str, self.active_input == 'chunk_size')]:
+            pygame.draw.rect(self.screen, (20, 20, 20) if active else (60, 60, 60), box)
+            pygame.draw.rect(self.screen, (100,100,100), box, 1)
+            self.screen.blit(self.ui_font.render(val, True, "white"), (box.x + 5, box.y + 3))
+        current_y += 55
 
-        info_y += 70
-        self.screen.blit(self.ui_font.render("Scale:", True, (220, 220, 220)), (ui_content_x, info_y))
-        scales = [0.5, 1.0, 1.25, 1.5]
+        self.screen.blit(self.ui_font_small.render("Text Scale:", True, (180, 180, 180)), (left_margin, current_y))
+        scales = [0.5, 1.0, 1.5]
         for i, s in enumerate(scales):
-            btn_rect = pygame.Rect(ui_content_x + i*55, info_y + 25, 45, 25)
+            btn_rect = pygame.Rect(left_margin + i*50, current_y + 20, 40, 25)
             self.ui_rects[f'scale_{s}'] = btn_rect
-            pygame.draw.rect(self.screen, (120, 120, 120) if self.scale == s else (80, 80, 80), btn_rect)
-            self.screen.blit(self.ui_font_small.render(str(s), True, (255, 255, 255)), (btn_rect.x + 8, btn_rect.y + 5))
+            col = (100, 150, 200) if self.scale == s else (60, 60, 60)
+            pygame.draw.rect(self.screen, col, btn_rect)
+            self.screen.blit(self.ui_font_small.render(str(s), True, "white"), (btn_rect.x + 10, btn_rect.y + 5))
+        current_y += 55
         
-        info_y += 70
-        self.screen.blit(self.ui_font.render(f"Chars: {self.cc_width}x{self.cc_height}", True, (220, 220, 220)), (ui_content_x, info_y))
-        self.screen.blit(self.ui_font.render(f"Pixels: {self.pixels_dims}", True, (220, 220, 220)), (ui_content_x, info_y + 25))
-        self.screen.blit(self.ui_font.render(f"Bixels: {self.bixels_dims}", True, (220, 220, 220)), (ui_content_x, info_y + 50))
+        self.screen.blit(self.ui_font_small.render(f"Grid: {self.cc_width} x {self.cc_height}", True, "gray"), (left_margin, current_y))
+        self.screen.blit(self.ui_font_small.render(f"Pixels: {self.pixels_dims}", True, "gray"), (left_margin, current_y + 15))
 
-        info_y += 90
-        self.screen.blit(self.ui_font.render("BG Color:", True, (220, 220, 220)), (ui_content_x, info_y))
-        pygame.draw.rect(self.screen, CC_COLORS[self.current_bg_color], (ui_content_x + 80, info_y, 30, 20))
+        footer_y = screen_h - 40
+        pygame.draw.rect(self.screen, (45, 45, 45), (ui_x + 10, footer_y - 10, UI_WIDTH - 20, 40))
+        pygame.draw.rect(self.screen, (80, 80, 80), (ui_x + 10, footer_y - 10, UI_WIDTH - 20, 40), 1)
+        self.screen.blit(self.ui_font.render("Press 'H' for HOTKEYS", True, (255, 200, 0)), (ui_x + 40, footer_y))
+
+    def draw_help_overlay(self):
+        overlay = pygame.Surface((self.screen.get_width(), self.screen.get_height()), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 200))
+        self.screen.blit(overlay, (0, 0))
         
-        instructions = [ "--- Controls ---", "LMB Drag: Draw", "RMB Drag: Erase", "RMB Click: Pick Color", "MMB Drag: Pan", "Scroll: Zoom", "Left/Right: Change Frame", "N: New Frame", "D: Delete Frame", "O: Toggle Onion Skin", "Ctrl+S: Save Project", "Ctrl+O: Open Project", "Ctrl+E: Export for MC", "F11: Fullscreen" ]
-        for i, line in enumerate(instructions):
-            self.screen.blit(self.ui_font_small.render(line, True, (180, 180, 180)), (ui_content_x, self.screen.get_height() - 220 + i * 18))
+        cx, cy = self.screen.get_width() // 2, self.screen.get_height() // 2
+        box_w, box_h = 500, 400
+        rect = pygame.Rect(cx - box_w//2, cy - box_h//2, box_w, box_h)
+        pygame.draw.rect(self.screen, (40, 40, 40), rect)
+        pygame.draw.rect(self.screen, (100, 100, 100), rect, 2)
+        
+        header = self.ui_font_header.render("KEYBOARD CONTROLS", True, (255, 255, 255))
+        self.screen.blit(header, (rect.centerx - header.get_width()//2, rect.y + 20))
+        
+        lines = [
+            ("LMB / Drag", "Draw Pixels"),
+            ("RMB / Drag", "Erase Pixels"),
+            ("RMB Click", "Pick Color"),
+            ("MMB / Drag", "Pan Camera"),
+            ("Mouse Wheel", "Zoom In/Out"),
+            ("", ""),
+            ("Arrow Left/Right", "Prev/Next Frame"),
+            ("N", "New Frame (Shift+N: Duplicate Here)"),
+            ("D", "Delete Frame"),
+            ("O", "Toggle Onion Skin"),
+            ("", ""),
+            ("Ctrl + S", "Save Project"),
+            ("Ctrl + O", "Open Project"),
+            ("Ctrl + E", "Export for ComputerCraft"),
+            ("F11", "Toggle Fullscreen"),
+            ("H", "Close This Menu")
+        ]
+        
+        start_text_y = rect.y + 60
+        for i, (key, desc) in enumerate(lines):
+            if key == "": 
+                start_text_y += 10
+                continue
+            key_s = self.ui_font.render(key, True, (255, 200, 0))
+            desc_s = self.ui_font.render(desc, True, (200, 200, 200))
+            self.screen.blit(key_s, (rect.x + 50, start_text_y + i*20))
+            self.screen.blit(desc_s, (rect.x + 250, start_text_y + i*20))
 
     def save_project(self):
-        root = tk.Tk()
-        root.withdraw()
-        filepath = filedialog.asksaveasfilename(
-            defaultextension=".ccanim_proj",
-            filetypes=[("CC Animator Project", "*.ccanim_proj"), ("All Files", "*.*")]
-        )
-        if not filepath:
-            print("Save cancelled.")
-            return
-
+        root = tk.Tk(); root.withdraw()
+        filepath = filedialog.asksaveasfilename(defaultextension=".ccanim_proj", filetypes=[("CC Animator Project", "*.ccanim_proj"), ("All Files", "*.*")])
+        if not filepath: return
         project_data = {
-            "config": {
-                "monitor_blocks_x": self.monitor_blocks_x,
-                "monitor_blocks_y": self.monitor_blocks_y,
-                "scale": self.scale,
-                "fps": self.fps,
-                "chunk_size": self.chunk_size,
-            },
+            "config": {"monitor_blocks_x": self.monitor_blocks_x, "monitor_blocks_y": self.monitor_blocks_y, "scale": self.scale, "fps": self.fps, "chunk_size": self.chunk_size},
             "animation_data": self.animation
         }
-
         try:
-            with open(filepath, "w") as f:
-                json.dump(project_data, f, indent=2)
-            print(f"Project saved successfully to {filepath}")
-        except Exception as e:
-            print(f"Error saving project: {e}")
+            with open(filepath, "w") as f: json.dump(project_data, f, indent=2)
+            print(f"Saved to {filepath}")
+        except Exception as e: print(f"Error: {e}")
 
     def load_project(self):
-        root = tk.Tk()
-        root.withdraw()
-        filepath = filedialog.askopenfilename(
-            filetypes=[("CC Animator Project", "*.ccanim_proj"), ("All Files", "*.*")]
-        )
-        if not filepath:
-            print("Load cancelled.")
-            return
-
+        root = tk.Tk(); root.withdraw()
+        filepath = filedialog.askopenfilename(filetypes=[("CC Animator Project", "*.ccanim_proj"), ("All Files", "*.*")])
+        if not filepath: return
         try:
-            with open(filepath, "r") as f:
-                project_data = json.load(f)
-
+            with open(filepath, "r") as f: project_data = json.load(f)
             config = project_data["config"]
-
-            if "width" in config and "height" in config:
-                print("Loading project with direct dimensions.")
-                self.cc_width = config["width"]
-                self.cc_height = config["height"]
-            else:
-                print("Loading project with monitor block configuration.")
-                self.monitor_x_str = str(config["monitor_blocks_x"])
-                self.monitor_y_str = str(config["monitor_blocks_y"])
-            
+            if "width" in config: self.cc_width, self.cc_height = config["width"], config["height"]
+            else: self.monitor_x_str, self.monitor_y_str = str(config["monitor_blocks_x"]), str(config["monitor_blocks_y"])
             self.scale = config.get("scale", 1.0)
             self.fps_str = str(config.get("fps", 10))
             self.chunk_size_str = str(config.get("chunk_size", 100))
-            self.monitor_x_str = str(config["monitor_blocks_x"])
-            self.monitor_y_str = str(config["monitor_blocks_y"])
-
-            print(len(self.animation[0]))
-            print(len(self.animation[0][1]))
             self.reinitialize_grid(set_initial_size=True, force_recalc=False if "width" in config else True)
-            # self.draw_frame(self.animation[self.current_frame_index])
-
-
             self.animation = project_data["animation_data"]
             self.current_frame_index = 0
-            
-            print(f"Project loaded successfully from {filepath}")
-
-        except Exception as e:
-            print(f"Error loading project: {e}")
+            print(f"Loaded {filepath}")
+        except Exception as e: print(f"Error: {e}")
 
     def export_animation(self):
-        import zlib
-        import base64
-        import os
-
-        CHUNK_SIZE = self.chunk_size 
-        
-        print("Exporting and chunking animation...")
-        
+        print("Exporting...")
         palette_map = {HEX_CHARS[i]: name for i, name in enumerate(COLOR_NAMES)}
         color_to_hex = {name: HEX_CHARS[i] for i, name in enumerate(COLOR_NAMES)}
-        
         base_filename = "animation"
-        chunk_filenames = []
-
         output_folder = base_filename
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
-        print(f"Exporting animation to folder: '{output_folder}'...")
-        
-        for chunk_index, i in enumerate(range(0, len(self.animation), CHUNK_SIZE)):
-            chunk_data = self.animation[i : i + CHUNK_SIZE]
+        if not os.path.exists(output_folder): os.makedirs(output_folder)
+        chunk_filenames = []
+        for chunk_index, i in enumerate(range(0, len(self.animation), self.chunk_size)):
+            chunk_data = self.animation[i : i + self.chunk_size]
             chunk_output_filename = f"{base_filename}_{chunk_index}.canim"
             chunk_filenames.append(chunk_output_filename)
-            
-            print(f"  Processing chunk {chunk_index+1} ({len(chunk_data)} frames)...")
-
             chunk_frames = []
-            
             keyframe_bgs = "".join([color_to_hex[chunk_data[0][y][x]] for y in range(self.cc_height) for x in range(self.cc_width)])
             chunk_frames.append({"type": "full", "bgs": keyframe_bgs})
-
             for frame_idx in range(1, len(chunk_data)):
                 prev_frame, curr_frame = chunk_data[frame_idx-1], chunk_data[frame_idx]
                 changes = []
                 for y in range(self.cc_height):
                     for x in range(self.cc_width):
-                        if prev_frame[y][x] != curr_frame[y][x]:
-                            changes.append({"x": x + 1, "y": y + 1, "bg": color_to_hex[curr_frame[y][x]]})
-                
-                if changes:
-                    chunk_frames.append({"type": "delta", "changes": changes})
-                else:
-                    chunk_frames.append({"type": "delta", "changes": []})
-
+                        if prev_frame[y][x] != curr_frame[y][x]: changes.append({"x": x + 1, "y": y + 1, "bg": color_to_hex[curr_frame[y][x]]})
+                chunk_frames.append({"type": "delta", "changes": changes})
             chunk_json_string = json.dumps({"frames": chunk_frames}, separators=(',', ':'))
             compressed_data = zlib.compress(chunk_json_string.encode('utf-8'))
             base64_string = base64.b64encode(compressed_data).decode('ascii')
-
-            chunk_filepath = os.path.join(output_folder, chunk_output_filename)
-
-            with open(chunk_filepath, "w") as f:
-                f.write(base64_string)
-
-        master_output = {
-            "header": {
-                "width": self.cc_width,
-                "height": self.cc_height,
-                "fps": self.fps,
-                "scale": self.scale,
-                "palette": palette_map
-            },
-            "chunks": chunk_filenames
-        }
-
-        master_filepath = os.path.join(output_folder, f"{base_filename}.mcanim")
-        with open(master_filepath, "w") as f:
-            json.dump(master_output, f, indent=2)
-            
-        print(f"\nExport complete! Master file and {len(chunk_filenames)} chunks saved to '{output_folder}' folder.")
+            with open(os.path.join(output_folder, chunk_output_filename), "w") as f: f.write(base64_string)
+        master_output = {"header": { "width": self.cc_width, "height": self.cc_height, "fps": self.fps, "scale": self.scale, "palette": palette_map }, "chunks": chunk_filenames}
+        with open(os.path.join(output_folder, f"{base_filename}.mcanim"), "w") as f: json.dump(master_output, f, indent=2)
+        print(f"Export complete.")
 
 if __name__ == "__main__":
     editor = AnimationEditor()
