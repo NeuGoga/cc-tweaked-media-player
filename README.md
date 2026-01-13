@@ -109,4 +109,3 @@ The format is designed for maximum storage efficiency within ComputerCraft's lim
 ---
 
 **Created by [NeuGoga](https://github.com/NeuGoga)**
-```
